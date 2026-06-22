@@ -4,6 +4,6 @@ import App from "./App.vue";
 import "./styles.css";
 
 /**
- * 每个 Tauri WebView 都独立挂载应用实例，Box 窗和设置窗通过 URL 参数选择视图
+ * 主 WebView 只承载设置页和状态编排，桌面与 Box 运行时交互由 Rust 原生控制器接管
  */
 createApp(App).use(createPinia()).mount("#app");

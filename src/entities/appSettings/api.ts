@@ -15,8 +15,8 @@ export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
 }
 
 /**
- * 同步托盘菜单的原生桌面图标隐藏勾选状态；偏好本身仍由桌面 Store 保存
+ * 同步托盘菜单的桌面接管勾选状态；偏好本身仍由桌面 Store 保存
  */
-export function setTrayNativeDesktopIconsHiddenChecked(hidden: boolean): Promise<boolean> {
-  return invoke<boolean>("set_tray_native_desktop_icons_hidden_checked", { hidden });
+export function setTrayDesktopTakeoverChecked(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>("set_tray_desktop_takeover_checked", { enabled });
 }

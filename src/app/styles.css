@@ -39,32 +39,6 @@ button {
   cursor: pointer;
 }
 
-/**
- * Box 内文件项需要保持接近 Windows 桌面的默认光标，避免悬停时像网页链接一样出现手型
- */
-.dasktop-icon-button {
-  cursor: default;
-}
-
-/**
- * 拖拽排序期间其他图标不参与 hover 和 pointer 命中，避免拖影经过时出现成片高亮
- */
-.dasktop-icon-button--drag-interaction-disabled {
-  pointer-events: none;
-}
-
-/**
- * 当前被拖动的原位置图标不显示 hover/active 背景，只保留轻微透明，避免和拖影同时高亮
- */
-.dasktop-icon-button--dragging,
-.dasktop-icon-button--dragging:hover,
-.dasktop-icon-button--dragging:active,
-.dark .dasktop-icon-button--dragging,
-.dark .dasktop-icon-button--dragging:hover,
-.dark .dasktop-icon-button--dragging:active {
-  background: transparent;
-}
-
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
@@ -129,42 +103,6 @@ select:focus-visible {
 
 .dark .dasktop-scrollarea::-webkit-scrollbar-thumb:hover {
   background-color: rgba(121, 128, 142, 0.78);
-}
-
-/**
- * Box 背景只保留半透明底色和毛玻璃滤镜，不叠加渐变或阴影，避免桌面组件显得过重
- */
-.dasktop-box-surface {
-  background: rgb(246 248 252 / var(--dasktop-box-background-opacity, 0.7));
-  backdrop-filter: blur(24px) saturate(1.65);
-  -webkit-backdrop-filter: blur(24px) saturate(1.65);
-}
-
-.dark .dasktop-box-surface {
-  background: rgb(18 20 24 / var(--dasktop-box-background-opacity, 0.7));
-}
-
-/**
- * Box 内滚动条更细，避免在小窗口里占用过多文件展示空间
- */
-.dasktop-box-scrollarea {
-  scrollbar-gutter: auto;
-}
-
-.dasktop-box-scrollarea::-webkit-scrollbar {
-  height: 8px;
-  width: 8px;
-}
-
-.dasktop-box-scrollarea::-webkit-scrollbar-thumb {
-  border-width: 2px;
-}
-
-/**
- * Box 更多菜单的 transform-origin 由 motion 动画复用，入口和退出时保持来自按钮的空间关系
- */
-.dasktop-box-menu {
-  transform-origin: top right;
 }
 
 @media (prefers-reduced-motion: reduce) {

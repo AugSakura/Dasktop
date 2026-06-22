@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ArrowUpRight, FolderPlus, Lock, LockOpen, RefreshCw, Trash2 } from "@lucide/vue";
+import { FolderPlus, Lock, LockOpen, RefreshCw, RotateCw, Trash2 } from "@lucide/vue";
 import { useDesktopBoxDeleteConfirmation } from "@/entities/desktopBox/deleteConfirmation";
 import type { DesktopBox } from "@/entities/desktopBox/types";
 
 /**
- * Box 面板只做创建、打开和刷新入口，具体窗口行为由 desktop feature 处理
+ * Box 面板只做创建、同步和刷新入口，具体桌面行为由原生控制器处理
  */
 defineProps<{
   boxes: DesktopBox[];
@@ -47,9 +47,9 @@ function createBoxFromPanel(): void {
 }
 
 /**
- * 打开 Box 时恢复删除按钮普通态，避免用户返回设置页后还看到旧确认状态
+ * 同步 Box 时恢复删除按钮普通态，避免用户返回设置页后还看到旧确认状态
  */
-function openBoxFromPanel(box: DesktopBox): void {
+function syncBoxFromPanel(box: DesktopBox): void {
   clearBoxDeleteConfirmation();
   emit("openBox", box);
 }
@@ -87,7 +87,7 @@ function refreshFromPanel(): void {
     <div class="mb-6 flex items-end justify-between gap-6">
       <div class="min-w-0">
         <h1 class="text-[24px] font-semibold tracking-[0] text-[#17181c] dark:text-[#f4f4f5]">Box</h1>
-        <p class="mt-1 text-[13px] text-[#6f7480] dark:text-[#a7abb5]">管理桌面上的独立 Box 窗口</p>
+        <p class="mt-1 text-[13px] text-[#6f7480] dark:text-[#a7abb5]">管理桌面上的原生 Box 面板</p>
       </div>
 
       <button
@@ -124,7 +124,7 @@ function refreshFromPanel(): void {
         <button
           class="grid min-w-0 py-3 text-left"
           type="button"
-          @click="openBoxFromPanel(box)"
+          @click="syncBoxFromPanel(box)"
         >
           <strong class="block truncate text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">{{ displayBoxTitle(box) }}</strong>
           <span class="mt-1 block text-[12px] text-[#707684] dark:text-[#9ca0aa]">
@@ -144,13 +144,13 @@ function refreshFromPanel(): void {
             <Lock v-else :size="15" />
           </button>
           <button
-            aria-label="打开 Box"
+            aria-label="同步 Box 到桌面"
             class="grid size-8 place-items-center rounded-[7px] text-[#68707d] transition-colors hover:bg-[#eef0f4] hover:text-[#17181c] dark:text-[#a7abb5] dark:hover:bg-[#242730] dark:hover:text-[#f4f4f5]"
-            title="打开 Box"
+            title="同步 Box 到桌面"
             type="button"
-            @click="openBoxFromPanel(box)"
+            @click="syncBoxFromPanel(box)"
           >
-            <ArrowUpRight :size="16" />
+            <RotateCw :size="15" />
           </button>
           <span class="flex h-8 w-[78px] justify-end">
             <button

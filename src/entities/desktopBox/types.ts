@@ -57,3 +57,63 @@ export interface DesktopSnapshot {
   desktopPath: string;
   items: DesktopItem[];
 }
+
+/**
+ * 原生图标位置所属容器，桌面和 Box 共用同一套位置模型
+ */
+export type NativeIconContainerKind = "desktop" | "box";
+
+/**
+ * 原生桌面层的图标持久化位置，路径仍是项目稳定主键
+ */
+export interface NativeIconPosition {
+  containerId: string | null;
+  containerKind: NativeIconContainerKind;
+  itemPath: string;
+  monitorId: string | null;
+  orderIndex: number | null;
+  x: number;
+  y: number;
+}
+
+/**
+ * 原生 Box 状态由前端持久化，Win32 控制器只读取后绘制和命中测试
+ */
+export interface NativeBoxState extends DesktopBox {
+  theme: string;
+}
+
+/**
+ * 原生 Box 与项目映射，命名保持 Rust serde 的 camelCase 结果
+ */
+export interface NativeBoxItem {
+  boxId: string;
+  itemPath: string;
+  orderIndex: number;
+}
+
+/**
+ * 原生桌面接管层的完整运行时状态，由前端 Store 同步给 Rust 控制器
+ */
+export interface NativeDesktopState {
+  boxItems: NativeBoxItem[];
+  boxes: NativeBoxState[];
+  display: NativeDesktopDisplaySettings;
+  iconPositions: NativeIconPosition[];
+  items: DesktopItem[];
+}
+
+/**
+ * 原生桌面层只关心绘制尺寸，不直接读取应用设置表
+ */
+export interface NativeDesktopDisplaySettings {
+  boxBackgroundOpacity: number;
+  cornerRadius: number;
+  iconGapX: number;
+  iconGapY: number;
+  iconSize: number;
+  labelTextSize: number;
+  labelWidth: number;
+  showItemLabels: boolean;
+  showShortcutArrow: boolean;
+}

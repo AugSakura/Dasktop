@@ -10,11 +10,11 @@ export type ThemeMode = "light" | "system" | "dark";
  */
 export interface AppSettings {
   /**
-   * 设置窗口独立使用的明暗主题，不再影响桌面上的 Box 窗口
+   * 设置窗口独立使用的明暗主题，不影响原生桌面上的 Box 面板
    */
   settingsTheme: ThemeMode;
   /**
-   * Box 窗口独立使用的明暗主题，便于整理面板和设置页采用不同外观
+   * 原生 Box 面板独立使用的明暗主题，便于整理区域和设置页采用不同外观
    */
   boxTheme: ThemeMode;
   /**
@@ -24,9 +24,9 @@ export interface AppSettings {
   snapToEdges: boolean;
   snapThreshold: number;
   /**
-   * 是否在 Dasktop 运行时隐藏全部 Windows 原生桌面图标
+   * 是否启用 Dasktop 的原生桌面接管模式
    */
-  nativeDesktopIconsHidden: boolean;
+  desktopTakeoverEnabled: boolean;
   showItemLabels: boolean;
   showShortcutArrow: boolean;
   doubleClickOpenItems: boolean;

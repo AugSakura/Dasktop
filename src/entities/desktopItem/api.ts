@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { DesktopItem } from "@/entities/desktopItem/types";
-import type { DesktopSnapshot } from "@/entities/desktopBox/types";
+import type { DesktopSnapshot, NativeDesktopState } from "@/entities/desktopBox/types";
 
 /**
  * 读取真实桌面目录快照；真实文件永远不在前端侧移动或改名
@@ -39,35 +39,27 @@ export function showNativeItemContextMenu(
 }
 
 /**
- * 通过 Explorer 桌面图标层窗口切换全部 Windows 原生桌面图标显示状态
+ * 切换 Fences 模式原生桌面接管层，失败时后端会恢复 Explorer 图标显示
  */
-export function setNativeDesktopIconsHidden(hidden: boolean): Promise<void> {
-  return invoke("set_native_desktop_icons_hidden", {
-    hidden,
+export function setDesktopTakeoverEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_desktop_takeover_enabled", {
+    enabled,
   });
 }
 
 /**
- * Box 窗口注册 Windows 原生 DropTarget，补齐 WebView2 默认不接受 Shell 虚拟图标拖入的能力
+ * 将前端 Store 的持久化状态同步给原生桌面层，Rust 侧只保留运行时副本
  */
-export function registerBoxNativeDropTarget(windowLabel: string): Promise<void> {
-  return invoke("register_box_native_drop_target", {
-    windowLabel,
+export function syncNativeDesktopState(state: NativeDesktopState): Promise<void> {
+  return invoke("sync_native_desktop_state", {
+    state,
   });
 }
 
 /**
- * Box 窗口销毁前释放自定义 DropTarget，避免旧窗口句柄继续占用原生拖放目标
+ * 请求原生桌面层重新绘制，用于显示器、DPI 和快照变化后的兜底刷新
  */
-export function unregisterBoxNativeDropTarget(windowLabel: string): Promise<void> {
-  return invoke("unregister_box_native_drop_target", {
-    windowLabel,
-  });
+export function refreshNativeDesktopLayer(): Promise<void> {
+  return invoke("refresh_native_desktop_layer");
 }
 
-/**
- * 读取系统当前左键状态，用于跨 Box 拖拽时判断释放点，不依赖单个 WebView 的 pointerup
- */
-export function isPrimaryMouseButtonPressed(): Promise<boolean> {
-  return invoke<boolean>("is_primary_mouse_button_pressed");
-}

@@ -146,8 +146,8 @@ function resetBoxVisualSetting(key: BoxVisualSettingKey): void {
 
       <div class="grid min-h-[76px] grid-cols-[1fr_auto] items-center gap-6 px-5">
         <div class="min-w-0 pr-4">
-          <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">Box 窗口主题</h2>
-          <p class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">只影响桌面上的 Box 窗口</p>
+          <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">Box 面板主题</h2>
+          <p class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">只影响桌面上的原生 Box 面板</p>
         </div>
 
         <SegmentedControl

@@ -1,9 +1,13 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
+  refreshNativeDesktopLayer,
   getDesktopItemsByPaths,
   getDesktopSnapshot,
-  setNativeDesktopIconsHidden,
+  openDesktopItem,
+  setDesktopTakeoverEnabled,
+  showNativeItemContextMenu,
+  syncNativeDesktopState,
 } from "@/entities/desktopItem/api";
 import {
   assignBoxItems,
@@ -33,8 +37,6 @@ import {
 import {
   listenDesktopStateChanged,
   notifyDesktopStateChanged,
-  requestDesktopStartupSnapshot,
-  type DesktopStartupSnapshot,
   type DesktopStateChangeScope,
 } from "@/shared/ipc/desktop";
 import type { AppSettings, ThemeMode } from "@/entities/appSettings/types";
@@ -43,11 +45,18 @@ import type {
   DesktopBoxItem,
   DesktopBoxItemDropPlacement,
   DesktopBoxTitlePosition,
+  NativeIconPosition,
 } from "@/entities/desktopBox/types";
-import type {
-  DesktopItem,
-  DesktopNameDisplayMode,
-} from "@/entities/desktopItem/types";
+import type { DesktopItem, DesktopNameDisplayMode } from "@/entities/desktopItem/types";
+import {
+  listenDesktopTakeoverBoxMoved,
+  listenDesktopTakeoverContextMenu,
+  listenDesktopTakeoverDropToBox,
+  listenDesktopTakeoverDropToDesktop,
+  listenDesktopTakeoverOpen,
+  listenDesktopTakeoverRefresh,
+  listenNativeDesktopError,
+} from "@/shared/ipc/desktopTakeover";
 
 /**
  * 更新 Box 时允许调用方控制是否清洗尺寸和广播事件，缩放等高频场景需要避免跨窗口刷新抖动
@@ -66,17 +75,14 @@ export const useDesktopStore = defineStore("desktop", () => {
   const desktopItemPathKeys = ref<Set<string>>(new Set());
   const boxes = ref<DesktopBox[]>([]);
   const boxItems = ref<DesktopBoxItem[]>([]);
+  const desktopItemPositions = ref<NativeIconPosition[]>([]);
   const isLoading = ref(true);
   const isInitialized = ref(false);
   const lastError = ref("");
   const settings = ref<AppSettings>({ ...DEFAULT_APP_SETTINGS });
   const storeInstanceId = crypto.randomUUID();
-  /**
-   * Box 内容窗和 Box 菜单窗都应使用窗口主题，设置页继续使用设置页主题
-   */
-  const routeSearchParams = new URLSearchParams(window.location.search);
-  const isBoxWindowContext = routeSearchParams.has("boxId") || routeSearchParams.has("boxMenu");
   let stateListenerRegistered = false;
+  let desktopTakeoverListenerRegistered = false;
   let themeTransitionTimer: ReturnType<typeof window.setTimeout> | null = null;
 
   /**
@@ -159,6 +165,7 @@ export const useDesktopStore = defineStore("desktop", () => {
       );
       items.value = snapshot.items;
       settings.value = savedSettings;
+      registerDesktopTakeoverListeners();
       applyCurrentWindowTheme();
       boxes.value = (savedBoxes.length > 0 ? savedBoxes : [createDefaultBox()]).map((box) =>
         sanitizeBoxSize(box),
@@ -166,77 +173,8 @@ export const useDesktopStore = defineStore("desktop", () => {
       boxItems.value = savedBoxItems;
       await ensureItemsAvailable(savedBoxItems.map((boxItem) => boxItem.itemPath));
 
-      await applyNativeDesktopIconVisibility();
+      await applyDesktopTakeoverMode();
       await Promise.all(boxes.value.map((box) => saveBox(box)));
-      isInitialized.value = true;
-    } catch (error) {
-      lastError.value = error instanceof Error ? error.message : String(error);
-    } finally {
-      isLoading.value = false;
-    }
-  }
-
-  /**
-   * Box 窗口启动时优先读取主窗口准备好的快照，避免每个窗口重复扫描桌面和读取 SQLite
-   */
-  async function initializeFromStartupSnapshot(token: string): Promise<boolean> {
-    if (isInitialized.value) {
-      return true;
-    }
-
-    const snapshot = await requestDesktopStartupSnapshot(token);
-    if (!snapshot) {
-      return false;
-    }
-
-    isLoading.value = true;
-    lastError.value = "";
-
-    try {
-      registerStateListener();
-      hydrateStartupSnapshot(snapshot);
-      isInitialized.value = true;
-      return true;
-    } catch (error) {
-      lastError.value = error instanceof Error ? error.message : String(error);
-      return false;
-    } finally {
-      isLoading.value = false;
-    }
-  }
-
-  /**
-   * 设置页已经持有完整桌面状态，批量打开 Box 前导出给新窗口复用
-   */
-  function createStartupSnapshot(): DesktopStartupSnapshot {
-    return {
-      boxItems: boxItems.value.map((boxItem) => ({ ...boxItem })),
-      boxes: boxes.value.map((box) => ({ ...box })),
-      desktopItems: items.value.map((item) => ({ ...item })),
-      desktopPath: desktopPath.value,
-      settings: { ...settings.value },
-    };
-  }
-
-  /**
-   * Box 菜单窗口只需要 Box 几何状态和主题设置，避免打开菜单时扫描桌面目录造成明显延迟
-   */
-  async function initializeBoxMenu(): Promise<void> {
-    if (isInitialized.value) {
-      return;
-    }
-
-    isLoading.value = true;
-    lastError.value = "";
-
-    try {
-      await initializeStorage();
-      registerStateListener();
-      const [savedBoxes, savedSettings] = await Promise.all([loadBoxes(), loadSettings()]);
-
-      boxes.value = savedBoxes.map((box) => sanitizeBoxSize(box));
-      settings.value = savedSettings;
-      applyCurrentWindowTheme();
       isInitialized.value = true;
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error);
@@ -253,7 +191,7 @@ export const useDesktopStore = defineStore("desktop", () => {
     applyDesktopSnapshot(snapshot);
     await ensureItemsAvailable(boxItems.value.map((boxItem) => boxItem.itemPath));
 
-    await applyNativeDesktopIconVisibility();
+    await applyDesktopTakeoverMode();
 
     if (shouldBroadcast) {
       await broadcastStateChanged("desktop");
@@ -261,7 +199,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   /**
-   * 设置窗重新获得焦点时从 SQLite 读取最新状态，解决多个独立 Box 窗口各自持有 Store 的问题
+   * 设置窗重新获得焦点时从 SQLite 读取最新状态，避免托盘或原生事件写入后页面状态滞后
    */
   async function reloadPersistedState(): Promise<void> {
     const [savedBoxes, savedBoxItems, savedSettings] = await Promise.all([
@@ -270,13 +208,13 @@ export const useDesktopStore = defineStore("desktop", () => {
       loadSettings(),
     ]);
 
-    const previousTheme = getCurrentWindowTheme();
+    const previousTheme = settings.value.settingsTheme;
     boxes.value = savedBoxes.map((savedBox) => sanitizeBoxSize(savedBox));
     boxItems.value = savedBoxItems;
     await ensureItemsAvailable(savedBoxItems.map((boxItem) => boxItem.itemPath));
     settings.value = savedSettings;
-    applyCurrentWindowTheme(previousTheme !== getCurrentWindowTheme());
-    await applyNativeDesktopIconVisibility();
+    applyCurrentWindowTheme(previousTheme !== settings.value.settingsTheme);
+    await applyDesktopTakeoverMode();
   }
 
   /**
@@ -328,6 +266,11 @@ export const useDesktopStore = defineStore("desktop", () => {
 
     boxes.value.push(nextBox);
     await saveBox(nextBox);
+    /**
+     * 状态广播不会回流到当前 Store 实例，新增 Box 后必须立即把本窗口内存态同步给原生接管层。
+     * 否则 SQLite 已经落库但 Win32 控制器仍持有旧快照，用户会看到“新增 Box”按钮没有任何反应。
+     */
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("boxes");
     return nextBox;
   }
@@ -349,6 +292,7 @@ export const useDesktopStore = defineStore("desktop", () => {
     if (broadcast) {
       await broadcastStateChanged("boxes");
     }
+    await syncDesktopTakeoverRuntime();
   }
 
   /**
@@ -386,6 +330,7 @@ export const useDesktopStore = defineStore("desktop", () => {
         orderIndex: nextOrderStart + index,
       })),
     );
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("boxes");
   }
 
@@ -443,7 +388,21 @@ export const useDesktopStore = defineStore("desktop", () => {
       (boxItem) => !(boxItem.boxId === boxId && boxItem.itemPath === itemPath),
     );
     await deleteBoxItem(boxId, itemPath);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("boxes");
+  }
+
+  /**
+   * Box 图标拖回桌面时删除映射并保存释放点，原生桌面层随后会在该位置重绘项目
+   */
+  async function moveItemFromBoxToDesktop(
+    boxId: string,
+    itemPath: string,
+    screenX: number,
+    screenY: number,
+  ): Promise<void> {
+    saveDesktopItemPosition(itemPath, screenX, screenY);
+    await removeItemFromBox(boxId, itemPath);
   }
 
   /**
@@ -479,6 +438,7 @@ export const useDesktopStore = defineStore("desktop", () => {
     boxes.value = boxes.value.filter((box) => box.id !== boxId);
     boxItems.value = boxItems.value.filter((boxItem) => boxItem.boxId !== boxId);
     await deleteBoxRecord(boxId);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("boxes");
   }
 
@@ -509,26 +469,22 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   /**
-   * 更新主题时同步根节点标识，确保设置页和 Box 窗口一起响应
+   * 更新设置页主题时同步根节点标识；原生 Box 主题通过运行时状态同步给 Win32 控制器
    */
   async function updateSettingsTheme(theme: ThemeMode): Promise<void> {
     settings.value.settingsTheme = theme;
-    if (!isBoxWindowContext) {
-      applyTheme(theme, true);
-    }
+    applyTheme(theme, true);
     await saveSetting(APP_SETTING_KEYS.settingsTheme, theme);
     await broadcastStateChanged("settings");
   }
 
   /**
-   * Box 窗口主题只影响桌面上的 Box，设置页切换时通过广播让各 Box 自己应用
+   * Box 主题只影响原生桌面上的 Box 面板，修改后立即同步给 Win32 控制器重绘
    */
   async function updateBoxTheme(theme: ThemeMode): Promise<void> {
     settings.value.boxTheme = theme;
-    if (isBoxWindowContext) {
-      applyTheme(theme, true);
-    }
     await saveSetting(APP_SETTING_KEYS.boxTheme, theme);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -538,6 +494,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateBoxResizeGridEnabled(enabled: boolean): Promise<void> {
     settings.value.boxResizeGridEnabled = enabled;
     await saveSetting(APP_SETTING_KEYS.boxResizeGridEnabled, enabled);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -547,6 +504,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateSnapToEdges(enabled: boolean): Promise<void> {
     settings.value.snapToEdges = enabled;
     await saveSetting(APP_SETTING_KEYS.snapToEdges, enabled);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -558,13 +516,31 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   /**
-   * 隐藏原生桌面图标直接切换 Explorer 桌面图标层，避免修改文件属性或图标坐标
+   * 桌面接管模式会进入 Win32 原生桌面层，必须等后端确认成功后再持久化开启状态。
+   *
+   * 如果先写入 SQLite 再启动原生层，启动失败或访问违例会让下次应用启动自动重试接管，
+   * 用户会陷入“打开即崩”的循环。关闭接管则优先落库，确保异常退出后 Explorer 图标可恢复。
    */
-  async function updateNativeDesktopIconsHidden(value: boolean): Promise<void> {
-    settings.value.nativeDesktopIconsHidden = value;
-    await saveSetting(APP_SETTING_KEYS.nativeDesktopIconsHidden, value);
-    await setNativeDesktopIconsHidden(value);
-    await broadcastStateChanged("settings");
+  async function updateDesktopTakeoverEnabled(value: boolean): Promise<void> {
+    if (!value) {
+      settings.value.desktopTakeoverEnabled = false;
+      await saveSetting(APP_SETTING_KEYS.desktopTakeoverEnabled, false);
+      await applyDesktopTakeoverMode();
+      await broadcastStateChanged("settings");
+      return;
+    }
+
+    const previousValue = settings.value.desktopTakeoverEnabled;
+    settings.value.desktopTakeoverEnabled = true;
+    try {
+      await applyDesktopTakeoverMode();
+      await saveSetting(APP_SETTING_KEYS.desktopTakeoverEnabled, true);
+      await broadcastStateChanged("settings");
+    } catch (error) {
+      settings.value.desktopTakeoverEnabled = previousValue;
+      await setDesktopTakeoverEnabled(false);
+      throw error;
+    }
   }
 
   /**
@@ -581,6 +557,7 @@ export const useDesktopStore = defineStore("desktop", () => {
       [key]: nextValue,
     };
     await saveSetting(APP_SETTING_KEYS[key], nextValue);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -590,6 +567,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateShowItemLabels(value: boolean): Promise<void> {
     settings.value.showItemLabels = value;
     await saveSetting(APP_SETTING_KEYS.showItemLabels, value);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -599,6 +577,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateShowShortcutArrow(value: boolean): Promise<void> {
     settings.value.showShortcutArrow = value;
     await saveSetting(APP_SETTING_KEYS.showShortcutArrow, value);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -608,6 +587,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateDoubleClickOpenItems(value: boolean): Promise<void> {
     settings.value.doubleClickOpenItems = value;
     await saveSetting(APP_SETTING_KEYS.doubleClickOpenItems, value);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -617,6 +597,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   async function updateNameDisplayMode(value: DesktopNameDisplayMode): Promise<void> {
     settings.value.nameDisplayMode = value;
     await saveSetting(APP_SETTING_KEYS.nameDisplayMode, value);
+    await syncDesktopTakeoverRuntime();
     await broadcastStateChanged("settings");
   }
 
@@ -739,17 +720,10 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   /**
-   * 当前窗口按自身角色应用对应主题，避免设置页主题误影响 Box 窗口
+   * 设置页按自身主题渲染，原生 Box 的明暗主题不再通过 WebView DOM 生效
    */
   function applyCurrentWindowTheme(shouldAnimate = false): void {
-    applyTheme(getCurrentWindowTheme(), shouldAnimate);
-  }
-
-  /**
-   * 设置页和 Box 窗口共享 Store，但 URL 中的 boxId 能稳定区分当前渲染目标
-   */
-  function getCurrentWindowTheme(): ThemeMode {
-    return isBoxWindowContext ? settings.value.boxTheme : settings.value.settingsTheme;
+    applyTheme(settings.value.settingsTheme, shouldAnimate);
   }
 
   /**
@@ -771,21 +745,6 @@ export const useDesktopStore = defineStore("desktop", () => {
     desktopPath.value = snapshot.desktopPath;
     desktopItemPathKeys.value = nextDesktopPathKeys;
     mergeKnownItems([...snapshot.items, ...assignedExternalItems]);
-  }
-
-  /**
-   * 快照水合只填充内存状态，不写数据库；真实持久化仍由主窗口初始化和后续操作负责
-   */
-  function hydrateStartupSnapshot(snapshot: DesktopStartupSnapshot): void {
-    desktopPath.value = snapshot.desktopPath;
-    desktopItemPathKeys.value = new Set(
-      snapshot.desktopItems.map((item) => normalizeItemPathKey(item.path)),
-    );
-    items.value = snapshot.desktopItems;
-    settings.value = snapshot.settings;
-    boxes.value = snapshot.boxes.map((box) => sanitizeBoxSize(box));
-    boxItems.value = snapshot.boxItems;
-    applyCurrentWindowTheme();
   }
 
   /**
@@ -843,14 +802,137 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   /**
-   * 原生桌面隐藏是运行时全局开关，Explorer 重启或窗口重新聚焦后需要重新应用
+   * 桌面接管模式由前端状态驱动：先同步完整状态，再让 Rust 原生层创建 Box 背景并协调 Explorer 图标坐标
    */
-  async function applyNativeDesktopIconVisibility(): Promise<void> {
-    if (!settings.value.nativeDesktopIconsHidden) {
+  async function applyDesktopTakeoverMode(): Promise<void> {
+    if (!settings.value.desktopTakeoverEnabled) {
+      await setDesktopTakeoverEnabled(false);
       return;
     }
 
-    await setNativeDesktopIconsHidden(true);
+    await syncDesktopTakeoverRuntime();
+    await setDesktopTakeoverEnabled(true);
+  }
+
+  /**
+   * 原生层只持有运行时副本，任何 Box 映射、布局或显示设置变化后都需要同步最新状态。
+   * 这里必须同步桌面目录全集，由 Rust 根据 Box 映射过滤；若提前传入未分配列表，图标拖回桌面后会因为二次过滤而无法重绘。
+   */
+  async function syncDesktopTakeoverRuntime(): Promise<void> {
+    if (!settings.value.desktopTakeoverEnabled) {
+      return;
+    }
+
+    await syncNativeDesktopState({
+      boxItems: boxItems.value.map((boxItem) => ({ ...boxItem })),
+      boxes: boxes.value.map((box) => ({
+        ...box,
+        theme: settings.value.boxTheme,
+      })),
+      display: {
+        boxBackgroundOpacity: settings.value.boxBackgroundOpacity,
+        cornerRadius: settings.value.boxCornerRadius,
+        iconGapX: settings.value.boxIconGapX,
+        iconGapY: settings.value.boxIconGapY,
+        iconSize: settings.value.boxIconSize,
+        labelTextSize: settings.value.boxLabelTextSize,
+        labelWidth: settings.value.boxFilenameWidth,
+        showItemLabels: settings.value.showItemLabels,
+        showShortcutArrow: settings.value.showShortcutArrow,
+      },
+      iconPositions: desktopItemPositions.value,
+      items: desktopItems.value,
+    });
+  }
+
+  /**
+   * 设置页需要一个显式入口把当前 Box 布局推给原生控制器，不再通过打开 WebView 窗口体现 Box。
+   */
+  async function refreshNativeDesktopRuntime(): Promise<void> {
+    await syncDesktopTakeoverRuntime();
+    await refreshNativeDesktopLayer();
+  }
+
+  /**
+   * 原生桌面事件只应由 main 控制窗口处理，避免每个 Box 窗口重复写数据库或弹菜单
+   */
+  function registerDesktopTakeoverListeners(): void {
+    if (desktopTakeoverListenerRegistered) {
+      return;
+    }
+
+    desktopTakeoverListenerRegistered = true;
+    void listenDesktopTakeoverOpen(async ({ payload }) => {
+      await openDesktopItem(payload.itemPath);
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenDesktopTakeoverContextMenu(async ({ payload }) => {
+      const targetItem = findItem(payload.itemPath);
+      if (!targetItem) {
+        return;
+      }
+
+      await showNativeItemContextMenu(targetItem.path, payload.screenX, payload.screenY);
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenDesktopTakeoverDropToBox(async ({ payload }) => {
+      await assignDroppedPathsToBox([payload.itemPath], payload.boxId);
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenDesktopTakeoverDropToDesktop(async ({ payload }) => {
+      if (payload.sourceBoxId) {
+        await removeItemFromBox(payload.sourceBoxId, payload.itemPath);
+      }
+      saveDesktopItemPosition(payload.itemPath, payload.x, payload.y);
+      await syncDesktopTakeoverRuntime();
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenDesktopTakeoverBoxMoved(async ({ payload }) => {
+      const targetBox = boxes.value.find((box) => box.id === payload.boxId);
+      if (!targetBox || targetBox.locked) {
+        return;
+      }
+
+      await updateBox({
+        ...targetBox,
+        x: Math.round(payload.x),
+        y: Math.round(payload.y),
+      });
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenDesktopTakeoverRefresh(async () => {
+      await refreshSnapshot(false);
+      await refreshNativeDesktopLayer();
+    }).catch(registerDesktopTakeoverListenerFailure);
+    void listenNativeDesktopError(({ payload }) => {
+      lastError.value = payload.message;
+    }).catch(registerDesktopTakeoverListenerFailure);
+  }
+
+  /**
+   * 监听注册失败需要允许下次初始化重试，否则 main 窗口早期异常会让原生层永久失联
+   */
+  function registerDesktopTakeoverListenerFailure(error: unknown): void {
+    desktopTakeoverListenerRegistered = false;
+    lastError.value = error instanceof Error ? error.message : String(error);
+  }
+
+  /**
+   * 桌面落点先保存在运行时内存中，确保拖出 Box 后本次会话立即按落点重绘
+   */
+  function saveDesktopItemPosition(itemPath: string, x: number, y: number): void {
+    const itemPathKey = normalizeItemPathKey(itemPath);
+    const nextPosition: NativeIconPosition = {
+      containerId: null,
+      containerKind: "desktop",
+      itemPath,
+      monitorId: null,
+      orderIndex: null,
+      x: Math.round(x),
+      y: Math.round(y),
+    };
+
+    desktopItemPositions.value = [
+      ...desktopItemPositions.value.filter(
+        (position) => normalizeItemPathKey(position.itemPath) !== itemPathKey,
+      ),
+      nextPosition,
+    ];
   }
 
   /**
@@ -877,7 +959,7 @@ export const useDesktopStore = defineStore("desktop", () => {
   }
 
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (getCurrentWindowTheme() === "system") {
+    if (settings.value.settingsTheme === "system") {
       applyCurrentWindowTheme(true);
     }
   });
@@ -891,23 +973,22 @@ export const useDesktopStore = defineStore("desktop", () => {
     desktopItems,
     desktopPath,
     findItem,
-    createStartupSnapshot,
     getBoxCollapseAnimationMs,
     getBoxItemPaths,
     getBoxItems,
     handleItemDrop,
     initialize,
-    initializeFromStartupSnapshot,
-    initializeBoxMenu,
     isInitialized,
     isLoading,
     items,
     lastError,
     moveBoxItemToEnd,
+    moveItemFromBoxToDesktop,
     reloadPersistedState,
     removeItemFromBox,
     reorderBoxItem,
     refreshSnapshot,
+    refreshNativeDesktopRuntime,
     settings,
     boxItems,
     totalBoxItems,
@@ -921,7 +1002,7 @@ export const useDesktopStore = defineStore("desktop", () => {
     updateBoxTitlePosition,
     updateDoubleClickOpenItems,
     updateNameDisplayMode,
-    updateNativeDesktopIconsHidden,
+    updateDesktopTakeoverEnabled,
     updateNumberSetting,
     updateSettingsTheme,
     updateShowItemLabels,

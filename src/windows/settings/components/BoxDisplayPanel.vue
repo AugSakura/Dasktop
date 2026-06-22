@@ -48,7 +48,7 @@ const emit = defineEmits<{
   doubleClickOpenItemsChange: [value: boolean];
   itemLabelsChange: [value: boolean];
   nameDisplayModeChange: [value: DesktopNameDisplayMode];
-  nativeDesktopIconsHiddenChange: [value: boolean];
+  desktopTakeoverEnabledChange: [value: boolean];
   showShortcutArrowChange: [value: boolean];
   snapThresholdChange: [value: number];
   snapToEdgesChange: [value: boolean];
@@ -272,16 +272,16 @@ function resetSnapThreshold(): void {
 
       <div class="grid min-h-[72px] grid-cols-[1fr_auto] items-center gap-6 px-5">
         <div class="min-w-0 pr-4">
-          <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">隐藏系统桌面图标</h2>
-          <p class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">运行 Dasktop 时隐藏 Explorer 原生桌面图标层，关闭后恢复显示</p>
+          <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">桌面接管模式</h2>
+          <p class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">由 Dasktop 原生层绘制未收纳桌面图标，实现图标进出 Box 的联动</p>
         </div>
 
         <label class="relative block h-7 w-12">
           <input
             class="peer sr-only"
-            :checked="props.settings.nativeDesktopIconsHidden"
+            :checked="props.settings.desktopTakeoverEnabled"
             type="checkbox"
-            @change="emit('nativeDesktopIconsHiddenChange', ($event.target as HTMLInputElement).checked)"
+            @change="emit('desktopTakeoverEnabledChange', ($event.target as HTMLInputElement).checked)"
           />
           <span
             class="absolute inset-0 rounded-full bg-[#c9cdd6] transition-colors peer-checked:bg-[#ff5c5c] dark:bg-[#3a3d46] dark:peer-checked:bg-[#ff6b6b]"

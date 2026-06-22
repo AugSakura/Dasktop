@@ -14,7 +14,7 @@ export type DesktopItemSource = "fileSystem" | "shell";
 export type DesktopNameDisplayMode = "full" | "hideShortcutExtension" | "hideAllExtensions";
 
 /**
- * 自绘桌面图标模型，path 是所有持久化映射的稳定主键
+ * 桌面项目模型，path 是 Box 映射和 Explorer 图标坐标同步的稳定主键
  */
 export interface DesktopItem {
   id: string;

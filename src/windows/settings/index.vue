@@ -12,20 +12,15 @@ import SettingsSidebar from "./components/SettingsSidebar.vue";
 import {
   isAutostartEnabled,
   setAutostartEnabled,
-  setTrayNativeDesktopIconsHiddenChecked,
+  setTrayDesktopTakeoverChecked,
 } from "@/entities/appSettings/api";
 import { useDesktopStore } from "@/entities/desktopBox/store";
-import { closeBoxWindow, openBoxWindow, showBoxWindow } from "@/entities/desktopBox/windows";
 import { SETTINGS_WINDOW_SYNC_TIMING } from "@/entities/desktopBox/layout";
 import {
   listenAutostartChanged,
   listenTrayCreateBox,
-  listenTrayToggleNativeDesktopIconsHidden,
+  listenTrayToggleDesktopTakeover,
 } from "@/shared/ipc/appTray";
-import {
-  createDesktopStartupSnapshotServer,
-  listenBoxWindowReady,
-} from "@/shared/ipc/desktop";
 import type { Component } from "vue";
 import type { DesktopBox } from "@/entities/desktopBox/types";
 
@@ -62,7 +57,6 @@ const unlistenFns: UnlistenFn[] = [];
  */
 const FOCUS_SYNC_DELAY_MS = SETTINGS_WINDOW_SYNC_TIMING.focusSyncDelayMs;
 const DRAG_RELEASE_FALLBACK_MS = SETTINGS_WINDOW_SYNC_TIMING.dragReleaseFallbackMs;
-const BOX_STARTUP_READY_WAIT_MS = 8_000;
 let focusSyncTimer: ReturnType<typeof window.setTimeout> | null = null;
 let isDraggingSettingsWindow = false;
 let dragReleaseCleanup: (() => void) | null = null;
@@ -90,7 +84,7 @@ const boxItemCounts = computed(() =>
 onMounted(async () => {
   await desktopStore.initialize();
   await syncAutostartEnabled();
-  await syncTrayNativeDesktopIconsHidden();
+  await syncTrayDesktopTakeover();
   unlistenFns.push(
     await listenAutostartChanged(({ payload }) => {
       autostartEnabled.value = payload;
@@ -102,8 +96,8 @@ onMounted(async () => {
     }),
   );
   unlistenFns.push(
-    await listenTrayToggleNativeDesktopIconsHidden(async ({ payload }) => {
-      await updateNativeDesktopIconsHidden(payload);
+    await listenTrayToggleDesktopTakeover(async ({ payload }) => {
+      await updateDesktopTakeoverEnabled(payload);
     }),
   );
   unlistenFns.push(
@@ -117,9 +111,7 @@ onMounted(async () => {
     }),
   );
 
-  if (await openAllBoxes()) {
-    await currentWindow.hide();
-  }
+  await currentWindow.hide();
 });
 
 /**
@@ -134,160 +126,10 @@ onUnmounted(() => {
 });
 
 /**
- * 设置页启动时批量打开现有 Box，避免窗口数量多时串行等待拖慢桌面恢复
- */
-async function openAllBoxes(): Promise<boolean> {
-  startupError.value = "";
-  const startupBoxes = [...desktopStore.boxes];
-  if (startupBoxes.length === 0) {
-    return true;
-  }
-
-  try {
-    const [readyTracker, startupSnapshotServer] = await Promise.all([
-      createBoxWindowReadyTracker(),
-      createDesktopStartupSnapshotServer(desktopStore.createStartupSnapshot()),
-    ]);
-
-    try {
-      const openResults = await Promise.allSettled(
-        startupBoxes.map((box) =>
-          openBoxWindow(box, {
-            focus: false,
-            startupSnapshotToken: startupSnapshotServer.token,
-            /**
-             * Windows WebView2 的文件拖放目标在创建阶段绑定到子 HWND；隐藏创建时可能拿不到可注册的子窗口，
-             * 表现为拖入 Box 时系统显示禁用光标。启动恢复保留快照复用，但让 Box 可见创建以保证 DropTarget 生效。
-             */
-            visible: true,
-          }),
-        ),
-      );
-      const openedBoxes = startupBoxes.filter(
-        (_, index) => openResults[index]?.status === "fulfilled",
-      );
-      const failedOpenResults = openResults.filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      await readyTracker.waitFor(
-        openedBoxes.map((box) => box.id),
-        BOX_STARTUP_READY_WAIT_MS,
-      );
-      const showResults = await Promise.allSettled(
-        openedBoxes.map((box) => showBoxWindow(box, { focus: false })),
-      );
-      const failedShowResults = showResults.filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      const failedResults = [...failedOpenResults, ...failedShowResults];
-
-      if (failedResults.length === 0) {
-        return true;
-      }
-
-      startupError.value = formatBatchOpenBoxError(failedResults);
-      return false;
-    } finally {
-      readyTracker.dispose();
-      startupSnapshotServer.dispose();
-    }
-  } catch (error) {
-    startupError.value = error instanceof Error ? error.message : String(error);
-    return false;
-  }
-}
-
-/**
- * 启动恢复时先监听 ready，再创建隐藏 Box，避免 ready 事件早于监听注册导致统一显示卡住
- */
-async function createBoxWindowReadyTracker(): Promise<{
-  dispose: () => void;
-  waitFor: (boxIds: string[], timeoutMs: number) => Promise<boolean>;
-}> {
-  const readyBoxIds = new Set<string>();
-  const waiters: Array<() => void> = [];
-  const unlisten = await listenBoxWindowReady(({ payload }) => {
-    readyBoxIds.add(payload.boxId);
-    for (const waiter of [...waiters]) {
-      waiter();
-    }
-  });
-
-  return {
-    dispose: () => {
-      unlisten();
-      waiters.splice(0);
-    },
-    waitFor: (boxIds, timeoutMs) =>
-      waitForReadyBoxIds(boxIds, timeoutMs, readyBoxIds, waiters),
-  };
-}
-
-/**
- * 等待目标 Box 首帧准备完成；超时后继续展示窗口，防止异常窗口永久隐藏
- */
-function waitForReadyBoxIds(
-  boxIds: string[],
-  timeoutMs: number,
-  readyBoxIds: Set<string>,
-  waiters: Array<() => void>,
-): Promise<boolean> {
-  const targetBoxIds = Array.from(new Set(boxIds));
-  if (areAllBoxesReady(targetBoxIds, readyBoxIds)) {
-    return Promise.resolve(true);
-  }
-
-  return new Promise<boolean>((resolve) => {
-    let isSettled = false;
-    const settle = (isReady: boolean): void => {
-      if (isSettled) {
-        return;
-      }
-
-      isSettled = true;
-      window.clearTimeout(timeoutTimer);
-      const waiterIndex = waiters.indexOf(waiter);
-      if (waiterIndex >= 0) {
-        waiters.splice(waiterIndex, 1);
-      }
-      resolve(isReady);
-    };
-    const waiter = (): void => {
-      if (areAllBoxesReady(targetBoxIds, readyBoxIds)) {
-        settle(true);
-      }
-    };
-    const timeoutTimer = window.setTimeout(() => settle(false), timeoutMs);
-
-    waiters.push(waiter);
-    waiter();
-  });
-}
-
-/**
- * 空列表视为已准备，方便没有成功打开窗口时直接进入错误处理分支
- */
-function areAllBoxesReady(boxIds: string[], readyBoxIds: Set<string>): boolean {
-  return boxIds.every((boxId) => readyBoxIds.has(boxId));
-}
-
-/**
- * 批量打开失败时保留第一条真实错误，并提示失败数量，避免大量窗口错误淹没设置页
- */
-function formatBatchOpenBoxError(failedResults: PromiseRejectedResult[]): string {
-  const [firstFailure] = failedResults;
-  const firstMessage =
-    firstFailure.reason instanceof Error ? firstFailure.reason.message : String(firstFailure.reason);
-
-  return `${failedResults.length} 个 Box 启动失败：${firstMessage}`;
-}
-
-/**
- * 新增 Box 后立即打开独立窗口，确保用户看到的是桌面扩展本体
+ * 新增 Box 后同步给原生控制器，真实显示由 Win32 桌面层负责而非 WebView 窗口。
  */
 async function createAndOpenBox(): Promise<void> {
-  const box = await desktopStore.createBox();
-  await openBoxWindow(box, { focus: true });
+  await desktopStore.createBox();
 }
 
 /**
@@ -298,11 +140,17 @@ async function toggleBoxLockedFromSettings(box: DesktopBox): Promise<void> {
 }
 
 /**
- * 设置页收到的删除事件已经由按钮完成二段式确认，这里只执行真实删除和窗口关闭
+ * 设置页收到的删除事件已经由按钮完成二段式确认，这里只删除 Box 映射和布局。
  */
 async function deleteBoxFromSettings(box: DesktopBox): Promise<void> {
   await desktopStore.deleteBox(box.id);
-  await closeBoxWindow(box.id);
+}
+
+/**
+ * Box 已由原生控制器常驻绘制，设置页里的“打开”动作只负责确认状态已经同步。
+ */
+async function focusNativeBoxFromSettings(_box: DesktopBox): Promise<void> {
+  await desktopStore.refreshNativeDesktopRuntime();
 }
 
 /**
@@ -329,26 +177,24 @@ async function updateAutostartEnabled(value: boolean): Promise<void> {
 }
 
 /**
- * 隐藏原生桌面图标的真实写入复用 Store，托盘只跟随最终偏好展示勾选状态
+ * 桌面接管模式的真实写入复用 Store，托盘只跟随最终偏好展示勾选状态
  */
-async function updateNativeDesktopIconsHidden(value: boolean): Promise<void> {
+async function updateDesktopTakeoverEnabled(value: boolean): Promise<void> {
   try {
-    await desktopStore.updateNativeDesktopIconsHidden(value);
+    await desktopStore.updateDesktopTakeoverEnabled(value);
   } catch (error) {
     desktopStore.lastError = error instanceof Error ? error.message : String(error);
   } finally {
-    await syncTrayNativeDesktopIconsHidden();
+    await syncTrayDesktopTakeover();
   }
 }
 
 /**
  * 设置页初始化、聚焦刷新和托盘操作后都用当前 Store 状态回写托盘，避免两个入口显示不一致
  */
-async function syncTrayNativeDesktopIconsHidden(): Promise<void> {
+async function syncTrayDesktopTakeover(): Promise<void> {
   try {
-    await setTrayNativeDesktopIconsHiddenChecked(
-      desktopStore.settings.nativeDesktopIconsHidden,
-    );
+    await setTrayDesktopTakeoverChecked(desktopStore.settings.desktopTakeoverEnabled);
   } catch (error) {
     desktopStore.lastError = error instanceof Error ? error.message : String(error);
   }
@@ -390,7 +236,7 @@ async function syncSettingsWindowState(): Promise<void> {
 
   await desktopStore.reloadPersistedState();
   await syncAutostartEnabled();
-  await syncTrayNativeDesktopIconsHidden();
+  await syncTrayDesktopTakeover();
   await desktopStore.refreshSnapshot(false);
 }
 
@@ -506,7 +352,7 @@ function closeSettings(): void {
             @double-click-open-items-change="desktopStore.updateDoubleClickOpenItems"
             @item-labels-change="desktopStore.updateShowItemLabels"
             @name-display-mode-change="desktopStore.updateNameDisplayMode"
-            @native-desktop-icons-hidden-change="updateNativeDesktopIconsHidden"
+            @desktop-takeover-enabled-change="updateDesktopTakeoverEnabled"
             @show-shortcut-arrow-change="desktopStore.updateShowShortcutArrow"
             @snap-threshold-change="desktopStore.updateSnapThreshold"
             @snap-to-edges-change="desktopStore.updateSnapToEdges"
@@ -520,7 +366,7 @@ function closeSettings(): void {
             :unassigned-items="desktopStore.unassignedItems.length"
             @create-box="createAndOpenBox"
             @delete-box="deleteBoxFromSettings"
-            @open-box="openBoxWindow"
+            @open-box="focusNativeBoxFromSettings"
             @refresh="desktopStore.refreshSnapshot"
             @toggle-box-locked="toggleBoxLockedFromSettings"
           />
