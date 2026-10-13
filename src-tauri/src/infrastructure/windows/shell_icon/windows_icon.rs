@@ -231,7 +231,8 @@ unsafe fn resolve_pidl_icon_data_url(pidl: *mut ITEMIDLIST) -> io::Result<Option
     pixels.map(|png| Some(png_data_url(&png)))
 }
 
-/// 只对 Windows 快捷方式启用 ShellLink 解析，避免普通文件扫描付出额外 COM 成本。
+/// 只对 `.lnk` 启用 ShellLink 解析：ShellLink 读不懂 `.url` 的 INI 文本格式，
+/// Internet 快捷方式交给通用 Shell 路径解析即可拿到与 Explorer 一致的图标。
 fn is_shortcut_path(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case(WINDOWS_SHORTCUT_EXTENSION))

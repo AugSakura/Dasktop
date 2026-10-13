@@ -55,7 +55,7 @@ export interface AppSettings {
    */
   showItemLabels: boolean;
   /**
-   * 快捷方式是否显示角标，关闭后仍不改变真实 `.lnk` 文件
+   * 快捷方式是否显示角标，关闭后仍不改变真实 `.lnk`、`.url` 文件
    */
   showShortcutArrow: boolean;
   /**

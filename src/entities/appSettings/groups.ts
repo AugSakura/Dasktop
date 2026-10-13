@@ -91,7 +91,7 @@ export const FILE_BEHAVIOR_SETTING_CONTROLS: Array<{
   {
     key: APP_SETTING_KEYS.showShortcutArrow,
     label: "显示快捷方式角标",
-    description: "只影响 `.lnk` 的视觉角标，不改变快捷方式文件",
+    description: "只影响 `.lnk` 和 `.url` 的视觉角标，不改变快捷方式文件",
   },
   {
     key: APP_SETTING_KEYS.autoHideNativeShellIcons,

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::domain::desktop::{BoxConflictPolicy, BoxDropAction};
-use crate::domain::filesystem::WINDOWS_SHORTCUT_EXTENSION;
+use crate::domain::filesystem::is_windows_shortcut_extension;
 use crate::infrastructure::filesystem::naming;
 use crate::infrastructure::filesystem::transfer::plan::{FileTransferKind, FileTransferPlan};
 
@@ -133,9 +133,9 @@ fn should_prepare_replace_backup(conflict_policy: BoxConflictPolicy, destination
     conflict_policy == BoxConflictPolicy::Replace && destination.exists()
 }
 
+/// 已是 Windows 快捷方式家族的来源直接复制，避免映射时套出指向快捷方式的二级快捷方式。
 fn is_windows_shortcut(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case(WINDOWS_SHORTCUT_EXTENSION))
-        .unwrap_or(false)
+        .is_some_and(is_windows_shortcut_extension)
 }
