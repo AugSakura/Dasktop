@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::domain::desktop::{DesktopItem, DesktopItemKind, DesktopItemSource};
-use crate::domain::filesystem::WINDOWS_SHORTCUT_EXTENSION;
+use crate::domain::filesystem::is_windows_shortcut_extension;
 use crate::infrastructure::filesystem::naming;
 use crate::infrastructure::windows::shell_icon;
 
@@ -49,16 +49,14 @@ fn resolve_item_name(path: &Path) -> String {
         .unwrap_or_else(|| naming::display_path(path))
 }
 
-/// 文件类型只用于选择前端后备图标，不参与真实文件的打开方式判断。
+/// 文件类型只用于选择前端后备图标，不参与真实文件的打开方式判断；`.lnk` 和 `.url` 同属快捷方式家族。
 fn resolve_item_kind(path: &Path, is_dir: bool) -> DesktopItemKind {
     if is_dir {
         return DesktopItemKind::Folder;
     }
 
     match path.extension().and_then(|value| value.to_str()) {
-        Some(extension) if extension.eq_ignore_ascii_case(WINDOWS_SHORTCUT_EXTENSION) => {
-            DesktopItemKind::Shortcut
-        }
+        Some(extension) if is_windows_shortcut_extension(extension) => DesktopItemKind::Shortcut,
         Some(_) => DesktopItemKind::File,
         None => DesktopItemKind::Unknown,
     }

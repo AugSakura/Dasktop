@@ -2,4 +2,6 @@
 
 pub mod contract;
 
-pub use contract::{WINDOWS_SHORTCUT_EXTENSION, WINDOWS_SHORTCUT_SUFFIX};
+pub use contract::{
+    is_windows_shortcut_extension, WINDOWS_SHORTCUT_EXTENSION, WINDOWS_SHORTCUT_SUFFIX,
+};
