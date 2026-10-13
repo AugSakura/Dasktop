@@ -38,6 +38,10 @@ import {
   type DesktopStartupSnapshot,
   type DesktopStateChangeScope,
 } from "@/shared/ipc/desktop";
+import {
+  clampBoxBoundsToVisibleMonitor,
+  isBoxBoundsInsideAnyMonitor,
+} from "@/entities/desktopBox/monitorBounds";
 import type {
   AppSettings,
   BoxDeletePolicy,
@@ -115,8 +119,9 @@ export const useDesktopStore = defineStore("desktop", () => {
       desktopPath.value = snapshot.desktopPath;
       settings.value = savedSettings;
       applyCurrentWindowTheme();
-      boxes.value = savedBoxes.map((box) => sanitizeBoxSize(box));
-      await Promise.all(boxes.value.map((box) => saveBox(box)));
+      const sanitizedBoxes = savedBoxes.map((box) => sanitizeBoxSize(box));
+      await Promise.all(sanitizedBoxes.map((box) => saveBox(box)));
+      boxes.value = await clampLoadedBoxesToMonitors(sanitizedBoxes);
       await syncShellDesktopIconVisibilityForCurrentSettings();
       isInitialized.value = true;
     } catch (error) {
@@ -212,7 +217,7 @@ export const useDesktopStore = defineStore("desktop", () => {
     const [savedBoxes, savedSettings] = await Promise.all([loadBoxes(), loadSettings()]);
 
     const previousTheme = getCurrentWindowTheme();
-    boxes.value = savedBoxes.map((savedBox) => sanitizeBoxSize(savedBox));
+    boxes.value = await clampLoadedBoxesToMonitors(savedBoxes.map((box) => sanitizeBoxSize(box)));
     settings.value = savedSettings;
     applyCurrentWindowTheme(previousTheme !== getCurrentWindowTheme());
   }
@@ -303,8 +308,12 @@ export const useDesktopStore = defineStore("desktop", () => {
 
     const { broadcast = true, sanitize = true } = options;
     const normalizedBox = sanitize ? sanitizeBoxSize(nextBox) : nextBox;
-    boxes.value[index] = normalizedBox;
-    await saveBox(normalizedBox);
+    // 屏幕外坐标一律不落库：最小化幽灵坐标和拔掉显示器后的位置一旦写入，重启后 Box 将永远不可见
+    const safeBox = (await isBoxBoundsInsideAnyMonitor(normalizedBox))
+      ? normalizedBox
+      : { ...normalizedBox, x: boxes.value[index].x, y: boxes.value[index].y };
+    boxes.value[index] = safeBox;
+    await saveBox(safeBox);
 
     if (broadcast) {
       await broadcastStateChanged("boxes");
@@ -661,6 +670,22 @@ export const useDesktopStore = defineStore("desktop", () => {
       locked: Boolean(box.locked),
       titleOpacity: sanitizeBoxTitleOpacity(box.titleOpacity),
     };
+  }
+
+  /**
+   * 把加载到的 Box 位置夹取回当前可见显示器，让旧版本残留的屏幕外坐标自愈。
+   *
+   * 历史版本曾把 Windows 最小化产生的幽灵坐标写进数据库，重启后 Box 会全部停在屏幕外；
+   * 这里只修正内存布局不回写数据库，显示器拔掉后重新插回时 Box 仍能回到原来的屏幕。
+   */
+  async function clampLoadedBoxesToMonitors(boxes: DesktopBox[]): Promise<DesktopBox[]> {
+    return Promise.all(
+      boxes.map(async (box) => {
+        const clampedBounds = await clampBoxBoundsToVisibleMonitor(box);
+
+        return { ...box, x: clampedBounds.x, y: clampedBounds.y };
+      }),
+    );
   }
 
   /**
